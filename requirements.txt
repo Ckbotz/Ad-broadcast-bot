@@ -1,5 +1,7 @@
-pyrogram==2.0.106
-TgCrypto==1.2.5
-motor==3.4.0
-pymongo==4.7.2
-aiohttp==3.9.5
+pyrofork==2.3.45
+tgcrypto
+pymongo[srv]==3.12.3
+motor==2.5.1
+marshmallow==3.14.1
+umongo==3.0.1
+aiohttp
