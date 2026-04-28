@@ -55,18 +55,13 @@ class BroadcastBot(Client):
         me = await self.get_me()
         logger.info(f"Bot started: @{me.username}")
 
-        # Start webserver
         self._web_runner = await run_webserver()
 
-        # Log restart to channel
         tz = pytz.timezone("Asia/Kolkata")
         now = datetime.now(tz).strftime("%d/%m/%Y %H:%M:%S")
         if LOG_CHANNEL:
             try:
-                await self.send_message(
-                    LOG_CHANNEL,
-                    f"🚀 Bot restarted\n📅 {now} IST",
-                )
+                await self.send_message(LOG_CHANNEL, f"🚀 Bot restarted\n📅 {now} IST")
             except Exception as e:
                 logger.warning(f"Startup log failed: {e}")
 
@@ -121,20 +116,19 @@ def build_inline_keyboard(buttons: list):
 
 
 def build_channel_keyboard(channels: list, page: int, selected: set):
+    """Keyboard for broadcast channel selection."""
     per_page = 10
     total = len(channels)
     total_pages = max(1, (total + per_page - 1) // per_page)
     start = page * per_page
-    end = start + per_page
-    page_channels = channels[start:end]
+    page_channels = channels[start:start + per_page]
 
     rows = []
     for ch in page_channels:
         ch_id = ch["channel_id"]
-        name = ch["channel_name"]
         tick = "✅ " if ch_id in selected else ""
         rows.append([InlineKeyboardButton(
-            f"{tick}{name}",
+            f"{tick}{ch['channel_name']}",
             callback_data=f"sel_ch:{ch_id}:{page}"
         )])
 
@@ -148,9 +142,41 @@ def build_channel_keyboard(channels: list, page: int, selected: set):
 
     rows.append([
         InlineKeyboardButton("📤 Send Selected", callback_data="broadcast:selected"),
-        InlineKeyboardButton("📢 Send to All", callback_data="broadcast:all"),
+        InlineKeyboardButton("📢 Send to All",   callback_data="broadcast:all"),
     ])
     rows.append([InlineKeyboardButton("❌ Cancel", callback_data="broadcast:cancel")])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_del_channel_keyboard(channels: list, page: int, selected: set):
+    """Keyboard for /del_channel — paginated multi-select with Delete button."""
+    per_page = 10
+    total = len(channels)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    start = page * per_page
+    page_channels = channels[start:start + per_page]
+
+    rows = []
+    for ch in page_channels:
+        ch_id = ch["channel_id"]
+        tick = "🗑 " if ch_id in selected else ""
+        rows.append([InlineKeyboardButton(
+            f"{tick}{ch['channel_name']}",
+            callback_data=f"dch_sel:{ch_id}:{page}"
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"dch_page:{page-1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next ▶", callback_data=f"dch_page:{page+1}"))
+    if nav:
+        rows.append(nav)
+
+    selected_count = len(selected)
+    delete_label = f"🗑 Delete ({selected_count} selected)" if selected_count else "🗑 Delete"
+    rows.append([InlineKeyboardButton(delete_label, callback_data="dch_confirm")])
+    rows.append([InlineKeyboardButton("❌ Cancel", callback_data="dch_cancel")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -216,6 +242,7 @@ async def help_handler(client: Client, message: Message):
         "/post — Create and broadcast a post\n"
         "/add_channels — Add channels to the bot\n"
         "/list_channels — View connected channels\n"
+        "/del_channel — Remove channel(s) from the bot\n"
         "/refresh_chnl — Refresh channel names from Telegram\n"
         "/delete_post — Delete a broadcast post from all channels\n"
         "/stats — Bot statistics\n"
@@ -308,6 +335,32 @@ async def list_channels_handler(client: Client, message: Message):
 
 
 # ─────────────────────────────────────────────
+# /del_channel
+# ─────────────────────────────────────────────
+
+@app.on_message(filters.command("del_channel") & filters.private)
+@admin_only
+async def del_channel_start(client: Client, message: Message):
+    channels = await db.get_all_channels()
+    if not channels:
+        return await message.reply("No channels to remove. Use /add_channels to add some.")
+
+    user_states[message.from_user.id] = {
+        "step": "del_channel_selecting",
+        "del_ch_selected": set(),
+        "del_ch_page": 0,
+    }
+    kb = build_del_channel_keyboard(channels, 0, set())
+    await message.reply(
+        "🗑 <b>Remove Channels</b>\n\n"
+        "Tap a channel to select it for removal (🗑 = selected).\n"
+        "You can select multiple. Then press <b>Delete</b>.",
+        parse_mode=enums.ParseMode.HTML,
+        reply_markup=kb
+    )
+
+
+# ─────────────────────────────────────────────
 # /refresh_chnl
 # ─────────────────────────────────────────────
 
@@ -391,7 +444,7 @@ async def delete_post_start(client: Client, message: Message):
 # ─────────────────────────────────────────────
 
 COMMANDS = [
-    "start", "help", "post", "add_channels",
+    "start", "help", "post", "add_channels", "del_channel",
     "list_channels", "refresh_chnl", "delete_post",
     "stats", "cancel", "skip",
 ]
@@ -426,7 +479,7 @@ async def message_state_handler(client: Client, message: Message):
                 parse_mode=enums.ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("➕ Add More", callback_data="add_more_channel"),
-                    InlineKeyboardButton("✅ Done", callback_data="add_channel_done")
+                    InlineKeyboardButton("✅ Done",     callback_data="add_channel_done")
                 ]])
             )
 
@@ -446,7 +499,7 @@ async def message_state_handler(client: Client, message: Message):
             parse_mode=enums.ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("➕ Add More", callback_data="add_more_channel"),
-                InlineKeyboardButton("✅ Done", callback_data="add_channel_done")
+                InlineKeyboardButton("✅ Done",     callback_data="add_channel_done")
             ]])
         )
 
@@ -499,10 +552,7 @@ async def show_post_preview(client: Client, chat_id: int, uid: int, state: dict)
     buttons = state.get("post_buttons", [])
     post_markup = build_inline_keyboard(buttons)
 
-    await client.send_message(
-        chat_id, "👁 <b>Post Preview:</b>",
-        parse_mode=enums.ParseMode.HTML
-    )
+    await client.send_message(chat_id, "👁 <b>Post Preview:</b>", parse_mode=enums.ParseMode.HTML)
 
     if media and media_type == "photo":
         await client.send_photo(
@@ -524,7 +574,7 @@ async def show_post_preview(client: Client, chat_id: int, uid: int, state: dict)
         "Ready to send? Press <b>Send</b> to choose channels.",
         parse_mode=enums.ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("📤 Send", callback_data="post_send"),
+            InlineKeyboardButton("📤 Send",   callback_data="post_send"),
             InlineKeyboardButton("❌ Cancel", callback_data="post_cancel")
         ]])
     )
@@ -533,8 +583,7 @@ async def show_post_preview(client: Client, chat_id: int, uid: int, state: dict)
 
 # ─────────────────────────────────────────────
 # Callback Query Handler
-# NOTE: No filters.private — CallbackQuery has no .chat attribute,
-#       using that filter causes the dispatcher to crash.
+# NOTE: No filters.private — CallbackQuery has no .chat attribute
 # ─────────────────────────────────────────────
 
 @app.on_callback_query()
@@ -544,8 +593,70 @@ async def callback_handler(client: Client, query: CallbackQuery):
     data = query.data
     state = user_states.get(uid, {})
 
-    # ── Add channel ──
-    if data == "add_more_channel":
+    # ════════════════════════════════════════
+    # del_channel callbacks
+    # ════════════════════════════════════════
+
+    if data.startswith("dch_sel:"):
+        # Toggle selection of a channel for deletion
+        parts = data.split(":")
+        ch_id = int(parts[1])
+        page  = int(parts[2])
+        selected = state.get("del_ch_selected", set())
+        if ch_id in selected:
+            selected.discard(ch_id)
+            await query.answer("Deselected")
+        else:
+            selected.add(ch_id)
+            await query.answer("🗑 Selected for removal")
+        state["del_ch_selected"] = selected
+        state["del_ch_page"] = page
+        user_states[uid] = state
+        channels = await db.get_all_channels()
+        kb = build_del_channel_keyboard(channels, page, selected)
+        await query.message.edit_reply_markup(kb)
+
+    elif data.startswith("dch_page:"):
+        page = int(data.split(":")[1])
+        state["del_ch_page"] = page
+        user_states[uid] = state
+        channels = await db.get_all_channels()
+        kb = build_del_channel_keyboard(channels, page, state.get("del_ch_selected", set()))
+        await query.message.edit_reply_markup(kb)
+        await query.answer()
+
+    elif data == "dch_confirm":
+        selected = state.get("del_ch_selected", set())
+        if not selected:
+            await query.answer("⚠️ No channels selected!", show_alert=True)
+            return
+
+        deleted_names = []
+        for ch_id in selected:
+            ch = await db.get_channel(ch_id)
+            name = ch["channel_name"] if ch else str(ch_id)
+            await db.remove_channel(ch_id)
+            deleted_names.append(name)
+
+        user_states.pop(uid, None)
+        names_text = "\n".join(f"• {n}" for n in deleted_names)
+        await query.message.edit_text(
+            f"✅ <b>{len(deleted_names)}</b> channel(s) removed:\n\n{names_text}",
+            parse_mode=enums.ParseMode.HTML
+        )
+        await log(client, f"🗑 Channels removed by admin:\n{names_text}")
+        await query.answer("Done!")
+
+    elif data == "dch_cancel":
+        user_states.pop(uid, None)
+        await query.message.edit_text("❌ Channel removal cancelled.")
+        await query.answer()
+
+    # ════════════════════════════════════════
+    # add_channel callbacks
+    # ════════════════════════════════════════
+
+    elif data == "add_more_channel":
         user_states[uid] = {"step": "add_channel_await_forward"}
         await query.message.edit_text(
             "📡 Forward a message from the next channel you want to add:"
@@ -561,7 +672,10 @@ async def callback_handler(client: Client, query: CallbackQuery):
         )
         await query.answer()
 
-    # ── Post flow ──
+    # ════════════════════════════════════════
+    # Post flow callbacks
+    # ════════════════════════════════════════
+
     elif data == "post_cancel":
         user_states.pop(uid, None)
         await query.message.edit_text("❌ Post creation cancelled.")
@@ -584,7 +698,6 @@ async def callback_handler(client: Client, query: CallbackQuery):
         )
         await query.answer()
 
-    # ── Pagination ──
     elif data.startswith("ch_page:"):
         page = int(data.split(":")[1])
         state["channel_page"] = page
@@ -597,7 +710,7 @@ async def callback_handler(client: Client, query: CallbackQuery):
     elif data.startswith("sel_ch:"):
         parts = data.split(":")
         ch_id = int(parts[1])
-        page = int(parts[2])
+        page  = int(parts[2])
         selected = state.get("selected_channels", set())
         if ch_id in selected:
             selected.discard(ch_id)
@@ -611,7 +724,10 @@ async def callback_handler(client: Client, query: CallbackQuery):
         kb = build_channel_keyboard(channels, page, selected)
         await query.message.edit_reply_markup(kb)
 
-    # ── Broadcast ──
+    # ════════════════════════════════════════
+    # Broadcast callbacks
+    # ════════════════════════════════════════
+
     elif data.startswith("broadcast:"):
         action = data.split(":")[1]
         channels = await db.get_all_channels()
@@ -670,7 +786,10 @@ async def callback_handler(client: Client, query: CallbackQuery):
         await log(client, f"📢 Broadcast | Post #{post_id} | ✅{success} ❌{failed}")
         await query.answer("Done!")
 
-    # ── Delete post ──
+    # ════════════════════════════════════════
+    # Delete post callbacks
+    # ════════════════════════════════════════
+
     elif data.startswith("del_post:"):
         post_id = int(data.split(":")[1])
         records = await db.get_post_messages(post_id)
