@@ -5,6 +5,7 @@ started via bot.run() which calls start() then idles.
 """
 
 import asyncio
+import functools
 import logging
 from datetime import datetime
 
@@ -19,10 +20,6 @@ from pyrogram.errors import FloodWait
 import database as db
 from config import API_ID, API_HASH, BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL
 from webserver import run_webserver
-from pyrogram import utils as pyroutils
-
-pyroutils.MIN_CHAT_ID = -999999999999
-pyroutils.MIN_CHANNEL_ID = -100999999999999
 
 logging.basicConfig(
     level=logging.INFO,
@@ -92,6 +89,7 @@ def is_admin(user_id: int) -> bool:
 
 
 def admin_only(func):
+    @functools.wraps(func)
     async def wrapper(client, update, *args, **kwargs):
         uid = update.from_user.id if hasattr(update, "from_user") else None
         if uid and is_admin(uid):
