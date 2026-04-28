@@ -19,6 +19,10 @@ from pyrogram.errors import FloodWait
 import database as db
 from config import API_ID, API_HASH, BOT_TOKEN, ADMIN_IDS, LOG_CHANNEL
 from webserver import run_webserver
+from pyrogram import utils as pyroutils
+
+pyroutils.MIN_CHAT_ID = -999999999999
+pyroutils.MIN_CHANNEL_ID = -100999999999999
 
 logging.basicConfig(
     level=logging.INFO,
