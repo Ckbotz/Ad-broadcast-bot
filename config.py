@@ -13,6 +13,6 @@ _raw_admins = os.environ.get("ADMIN_IDS", "")
 ADMIN_IDS = set(int(x.strip()) for x in _raw_admins.split(",") if x.strip().isdigit())
 
 # MongoDB
-MONGO_URI    = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+MONGO_URI    = os.environ.get("MONGO_URI", "")
 MONGO_DB_NAME = os.environ.get("MONGO_DB_NAME", "broadcast_bot")
 
