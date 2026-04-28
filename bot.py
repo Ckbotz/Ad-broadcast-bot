@@ -10,7 +10,6 @@ import logging
 from datetime import datetime
 
 import pytz
-from aiohttp import web
 from pyrogram import Client, filters, enums
 from pyrogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -256,6 +255,23 @@ async def cancel_handler(client: Client, message: Message):
 
 
 # ─────────────────────────────────────────────
+# /skip  (used during post button step)
+# ─────────────────────────────────────────────
+
+@app.on_message(filters.command("skip") & filters.private)
+@admin_only
+async def skip_handler(client: Client, message: Message):
+    uid = message.from_user.id
+    state = user_states.get(uid)
+    if not state or state.get("step") != "post_await_buttons":
+        return await message.reply("⚠️ Nothing to skip right now.")
+    state["post_buttons"] = []
+    state["step"] = "post_preview"
+    user_states[uid] = state
+    await show_post_preview(client, message.chat.id, uid, state)
+
+
+# ─────────────────────────────────────────────
 # /add_channels
 # ─────────────────────────────────────────────
 
@@ -374,8 +390,11 @@ async def delete_post_start(client: Client, message: Message):
 # General message handler (state machine)
 # ─────────────────────────────────────────────
 
-COMMANDS = ["start", "help", "post", "add_channels",
-            "list_channels", "refresh_chnl", "delete_post", "stats", "cancel"]
+COMMANDS = [
+    "start", "help", "post", "add_channels",
+    "list_channels", "refresh_chnl", "delete_post",
+    "stats", "cancel", "skip",
+]
 
 @app.on_message(filters.private & ~filters.command(COMMANDS))
 @admin_only
@@ -414,7 +433,9 @@ async def message_state_handler(client: Client, message: Message):
         try:
             member = await client.get_chat_member(ch_id, "me")
             if member.status.value not in ("administrator", "creator"):
-                return await message.reply("⚠️ I'm not an admin in that channel. Please add me as admin first.")
+                return await message.reply(
+                    "⚠️ I'm not an admin in that channel. Please add me as admin first."
+                )
         except Exception as e:
             return await message.reply(f"⚠️ Could not verify bot membership: {e}")
 
@@ -455,12 +476,13 @@ async def message_state_handler(client: Client, message: Message):
 
     # ── Post: await buttons ──
     elif step == "post_await_buttons":
-        if message.text and message.text != "/skip":
+        if message.text:
             buttons = parse_buttons(message.text)
             if not buttons:
                 return await message.reply(
                     "⚠️ Could not parse buttons. Use format:\n"
-                    "<code>Button Name - https://link.com</code>",
+                    "<code>Button Name - https://link.com</code>\n\n"
+                    "Or send /skip to add no buttons.",
                     parse_mode=enums.ParseMode.HTML
                 )
             state["post_buttons"] = buttons
@@ -511,9 +533,11 @@ async def show_post_preview(client: Client, chat_id: int, uid: int, state: dict)
 
 # ─────────────────────────────────────────────
 # Callback Query Handler
+# NOTE: No filters.private — CallbackQuery has no .chat attribute,
+#       using that filter causes the dispatcher to crash.
 # ─────────────────────────────────────────────
 
-@app.on_callback_query(filters.private)
+@app.on_callback_query()
 @admin_only
 async def callback_handler(client: Client, query: CallbackQuery):
     uid = query.from_user.id
